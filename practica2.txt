@@ -1,0 +1,16 @@
+  131  cat ~/.ssh/ed25519.pub
+  132  cat User/adrianafernandezsanchez/.ssh/ed25519.pub
+  133  cat /Users/adrianafernandezsanchez/.ssh/id_ed25519.pub
+  134  git remote add origin git@github.com:adrianafernandez5/cuaderno-bioinform-tica-adriana.git
+  135  git push -u origin main
+  136  git push -u origin soca
+  137  git push -u origin branch
+  138  git config --list
+  139  git status
+  140  git add LICENSE.txt
+  141  git commit -m " la licencia"
+  142  git push -u origin master
+  143  git push
+  144  git pull
+  145  git fetch
+  146  git status
