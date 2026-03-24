@@ -1,0 +1,135 @@
+---
+title: "guion8.qmd"
+format: html
+editor: visual
+---
+
+## Datos
+
+### Datos del primer ejercicio
+
+En el primer ejercicio, usaremos los proteomas de dos especies bacterianas endosimbiontes, con genomas reducidos (para facilitar las búsquedas): Buchnera aphidicola (107806) y Blochmannia ocreatus (251538). Los proteomas se pueden descargar desde uniprot. En adelante, supondré que están descomprimidos y guardados en dos archivos FASTA `../../data/buchnera.fa` y `../../data/blochmannia.fa.` para descargarlo hay que darle al nuemero bajo la columna entry, no al nombre del organismo porque si no te da la taxonomía
+
+### Datos del segundo ejercicio
+
+Para el segundo ejercicio, necesitamos descargar la base de datos de Swissprot para BLAST. Podemos hacerlo de dos maneras. En cualquier caso, los archivos descargados y descomprimidos deben guardarse en la carpeta `../../data`. Por tanto, los comandos siguientes deben ejecutarse desde esa carpeta, en el terminal de Bash.
+
+en mi caso al tener mac este comando no me funcionaba (`update_blastdb --decompress swissprot`), entonces he usado este: `update_blastdb.pl --decompress swissprot`
+
+### Datos del tercer ejercicio
+
+Se descarga el archivo contaminacion.fa.gz, en mi caso se me ha descargado como `queries.fa` en la carpeta data8 dentro de la carpeta de la práctica_8.
+
+# Ejercicio 1. Identificación aproximada de ortólogos
+
+Una estrategia habitual para identificar genes ortólogos es comprobar si cada uno es, respecto del otro, su mejor resultado de BLAST. Lo que en inglés llaman reciprocal best hits. Aunque se trata de un método heurístico, los resultados son bastante fiables. Vamos a practicarlo entre dos proteomas que debes haber descargado, y que primero debemos enmascarar e indexar para BLAST.
+
+## Enmascarar e indexar los proteomas
+
+Puedes copiar estas órdenes a tu cuaderno de trabajo. Fíjate que deben ser ejecutadas en la carpeta adecuada. ESTE ES EL DEL GUIÓN
+
+```{r}
+if [ ! -e ../../data/buchnera.paa ]; then
+   # Creamos un archivo para enmascarar zonas de baja complejidad:
+   if [ ! -e buchnera_seg.asnb ]; then
+      segmasker -in ../../data/buchnera.fa \
+                -infmt fasta \
+                -parse_seqids \
+                -outfmt maskinfo_asn1_bin \
+                -out ../../data/buchnera_seg.asnb
+   fi
+   # Y indexamos el archivo FASTA para BLAST:
+   makeblastdb  -in ../../data/buchnera.fa \
+                -input_type fasta \
+                -dbtype prot \
+                -parse_seqids \
+                -mask_data ../../data/buchnera_seg.asnb \
+                -out ../../data/buchnera \
+                -title "Proteoma de Buchnera"
+fi
+# Hay que repetir todo esto para Blochmannia.
+```
+
+(hago lo mismo sin los mensajes para poder ejecutarlo, uno para Blochmania y otro para Buchnera) Lo he tenido que modificar para que se ejecutara
+
+```{bash}
+if [ ! -e ../../data/buchnera.paa ]; then
+   if [ ! -e buchnera_seg.asnb ]; then
+      segmasker -in buchnera.fa.f \
+                -infmt fasta \
+                -parse_seqids \
+                -outfmt maskinfo_asn1_bin \
+                -out buchnera_seg.asnb
+   fi
+   makeblastdb  -in buchnera.fa.f \
+                -input_type fasta \
+                -dbtype prot \
+                -parse_seqids \
+                -mask_data buchnera_seg.asnb \
+                -out buchnera \
+                -title "Proteoma de Buchnera"
+fi
+```
+
+```{bash}
+if [ ! -e candidatus.paa ]; then
+   if [ ! -e candidatus_seg.asnb ]; then
+      segmasker -in candidatus.fa.f \
+      -infmt fasta -parse_seqids \
+      -outfmt maskinfo_asn1_bin \
+      -out candidatus_seg.asnb
+    fi 
+    makeblastdb -in candidatus.fa.f \
+    -input_type fasta \
+    -dbtype prot \
+    -parse_seqids \
+    -mask_data candidatus_seg.asnb \
+    -out candidatus \
+    -title "Proteoma de Candidatus"
+fi
+```
+
+## Realizar las busquedas de BLASTP
+
+El objetivo es encontrar la proteína de Blochmannia ocreatus que más se parece a cada una de las proteínas de Buchnera aphidicola, y viceversa. Entonces, seleccionaremos las parejas de proteínas que sean recíprocamente las más similares una de otra, por ser más probablemente ortólogas. Otras relaciones de semejanza no recíprocas pueden ser debidas a la paralogía.
+
+-   de Buchnera a Blochmania
+
+```{bash}
+blastp -query buchnera.fa.f \
+       -db candidatus \
+       -out buc2blo.txt \
+       -outfmt '6 qseqid sseqid qlen slen length evalue bitscore' \
+       -evalue 0.001 \
+       -max_target_seqs 1
+```
+
+-   de blochmania a buchnera
+
+```{bash}
+blastp -query candidatus.fa.f \
+       -db buchnera \
+       -out blo2buc.txt \
+       -outfmt '6 qseqid sseqid qlen slen length evalue bitscore' \
+       -evalue 0.001 \
+       -max_target_seqs 1
+```
+
+::: {.callout-note appearance="minimal" icon="false"}
+# Nota
+
+Revisa los argumentos utilizados, prueba otros si quieres y asegúrate de que son adecuados. Puedes consultar la ayuda con `blastp -help` en el terminal.
+:::
+# Comparación de resultados
+```{r}
+buc2blo <- read.table(
+   'buc2blo.txt',
+   col.names = c('query', 'subject', 'qlen', 'slen',
+                 'length', 'evalue', 'bitscore')
+)
+blo2buc <- read.table(
+   'blo2buc.txt',
+   col.names = c('query', 'subject', 'qlen', 'slen',
+                 'length', 'evalue', 'bitscore')
+)
+```
