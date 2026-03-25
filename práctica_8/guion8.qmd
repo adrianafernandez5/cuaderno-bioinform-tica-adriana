@@ -120,7 +120,9 @@ blastp -query candidatus.fa.f \
 
 Revisa los argumentos utilizados, prueba otros si quieres y asegúrate de que son adecuados. Puedes consultar la ayuda con `blastp -help` en el terminal.
 :::
+
 # Comparación de resultados
+
 ```{r}
 buc2blo <- read.table(
    'buc2blo.txt',
@@ -133,3 +135,206 @@ blo2buc <- read.table(
                  'length', 'evalue', 'bitscore')
 )
 ```
+
+::: callout-note
+# Nota
+
+Echa un vistazo a estas tablas de resultados. ¿Sabrías identificar las parejas de proteínas que son recíprocamente la que más se parece una a la otra?
+:::
+
+#eso lo hacemos con la función match
+
+```{r}
+buc2blo$reverse <- blo2buc[
+   match(buc2blo$subject, blo2buc$query),
+   'subject'
+]
+coincidencias <- buc2blo[
+   buc2blo$query == buc2blo$reverse,
+   c('query', 'subject')
+]
+```
+
+::: {.callout-note appearance="minimal" icon="false"}
+# Nota
+
+¿Qué datos te gustaría representar gráficamente para ganar confianza en que los resultados son correctos y tienen sentido?
+:::
+
+lo que sería conveniente representar es una distribucón de los e-values, o una comparación de los bitsocre de buc2blo vs blo2buc.
+
+# Ejercicio 2. PSI-BLAST
+El PSI-BLAST nos permite identificar semejanzas sutiles, como las que existen entre miembros alejados de una superfamilia proteica. Para comprobarlo vamos a realizar una búsqueda a partir de cualquiera de las proteínas siguientes: Q9CC91, P39615, B1AJI8, P47343, Q5UPT2, Q6UDG6, A1AFY9, O59825 y P30314. Todas ellas están en Swissprot y pertenecen a una misma superfamilia. Sin embargo, un simple BLASTP con cualquiera de ellas no encuentra ninguna de las otras1. Comprobemos si con un PSI-BLAST lo conseguimos. A continuación lo intento a partir de P39615. Repite los pasos usando otra proteína de la lista como query y compara los resultados.
+
+```{r}
+# Como Swissprot debería estar ya descargada en `../../data`, podemos sacar
+# de ahí la secuencia de la proteína escogida:
+blastdbcmd -db ../../data/swissprot -entry P39615 -out P39615.fa
+
+# Y ahora la usamos como query en psi-blast:
+psiblast -db data8/swissprot \
+         -query P39615.fa \
+         -out P39615.blastout.txt \
+         -evalue 0.1 \
+         -outfmt 7 \
+         -inclusion_ethresh 0.001 \
+         -num_iterations 7 \
+         -matrix BLOSUM62
+```
+(ahora sin mensajes para ejecutarlo)
+
+```{bash}
+blastdbcmd -db data8/swissprot -entry P39615 -out P39615.fa
+psiblast -db data8/swissprot \
+         -query P39615.fa \
+         -out P39615.blastout.txt \
+         -evalue 0.1 \
+         -outfmt 7 \
+         -inclusion_ethresh 0.001 \
+         -num_iterations 7 \
+         -matrix BLOSUM62
+```
+
+::: {.callout-note appearance="minimal" icon="false"}
+# Nota
+Consulta la ayuda de `psiblast` y asegúrate de entender para qué sirven los argumentos que hemos usado. Por ejemplo, ¿cuál es la diferencia entre `-evalue` y `-inclusion_ethresh`?¿Cómo harías que la búsqueda fuera más sensible todavía?
+:::
+
+La función `-evalue`es el umbral de los e-value para reportar resultados finales en la salida final, mientras que la función `-inclusion_ethresh`es paraindicar el umbral de e-value para incluir los hits en la siguiente iteración del PSI-BLAST
+
+# Ejercicio 3. Origen de la contaminación en un archivo FASTQ
+
+El archivo `contaminacion.fa.gz` contiene 33174 lecturas procedentes de un experimento de secuenciación del insecto Aphis aurantii, con Ion Torrent. Concretamente son las lecturas que no han podido mapearse al genoma de referencia ([SRR13258790] (https://www.ebi.ac.uk/ena/browser/view/SRR13258790) ). Concretamente son las lecturas que no han podido mapearse al genoma de referencia ([GCA_055615905)] (https://www.ebi.ac.uk/ena/browser/view/GCA_055615905)) de este insecto. Hay dos motivos principales por los que muchos fragmentos no pueden mapearse al genoma de referencia: o bien el genoma de referencia es incompleto, o bien los fragmentos no pertenecen a esa especie. La secuenciación no distingue al individuo de interés de sus simbiontes, parásitos o presas. Los fragmentos de ADN secuenciados que no proceden del individuo diana se consideran contaminación. El objetivo de este ejercicio es determinar la procedencia de estos fragmentos mediante BLASTN remoto a la base de datos nr (no redundante). Lo que nos interesa es sólo el origen taxonómico de la secuencia más parecida a cada una de esas lecturas.
+
+## Selección aleatoria de 20 queries
+Si enviamos 33174 queries a los servidores del NCBI, o bien tardarán muchas horas en devolver los resultados o simplemente interrumpirán el servicio. Cada persona escogerá 20 secuencias al azar mediante las órdenes siguientes, y después compartiremos los resultados para tener una muestra más representativa.
+
+```{r}
+library('Biostrings')
+unmapped <- readDNAStringSet('queries.fa')
+n <- length(unmapped)
+muestra <- unmapped[sample(1:n, 20)]
+writeXStringSet(muestra, 'muestra.fa')
+```
+
+## BLASTN remoto
+
+La orden siguiente pide una sola secuencia (la más parecida) y alguna información sobre el alineamiento, para poder garantizar la calidad del resultado.
+
+```{bash}
+if [ ! -e resultado.txt ]; then
+   blastn -query muestra.fa \
+          -db nr \
+          -out resultado.txt \
+          -outfmt '6 qaccver saccver length qlen qstart qend evalue bitscore staxid' \
+          -max_target_seqs 1 \
+          -evalue 0.001 \
+          -remote 2> /dev/null
+fi
+```
+
+## Identificación taxonómica
+
+La única información taxonómica que podemos obtener de las secuencias encontradas cuando realizamos un BLAST remoto es el identificador taxonómico. Esta restricción tiene por objetivo agilizar el servicio remoto. Ahora es asunto nuestro saber a qué especies corresponden los identificadores, de manera automática. Hay varias opciones. Para no tener que descargar la base de datos taxonómica, intentaremos recuperar la información completa con una nueva consulta remota. Esta vez, con los programas `datasets` y `dataformat` de NCBI, que ya conocéis.
+
+```{r}
+# Extraemos los identificadores taxonómicos (columna 9) de "resultado.txt":
+cut -f 9 resultado.txt | sort | uniq | paste -sd ',' > taxids.txt
+
+# Generamos una tabla con información taxonómica de esos identificadores:
+datasets summary taxonomy taxon $(cat taxids.txt) --as-json-lines | \
+dataformat tsv taxonomy --template tax-summary > taxreport.txt
+```
+
+```{bash}
+cut -f 9 resultado.txt | sort | uniq | paste -sd ',' > taxids.txt
+datasets summary taxonomy taxon $(cat taxids.txt) --as-json-lines | \
+dataformat tsv taxonomy --template tax-summary > taxreport.txt
+```
+::: {.callout-note appearance="minimal" icon="false"}
+#Nota
+Puedes importar tanto los resultados del BLAST como el informe taxonómico a una sesión de R y determinar que fracción de las lecturas seleccionadas parecen proceder de un hemímptero y qué fracción proceden de otros organismos. Tienen sentido los resultados? Encuentras alguna secuencia de origen vegetal?
+
+```{r}
+blast <- read.table('resultado.txt',
+   col.names = c('qaccver', 'saccver', 'length', 'qlen',
+                 'qstart', 'qend', 'evalue', 'bitscore', 'staxid'))
+
+taxreport <- read.table('taxreport.txt', sep = '\t', header = TRUE)
+
+head(blast)
+head(taxreport)
+```
+```{bash}
+blastn -query muestra.fa \
+       -db nr \
+       -out resultado.txt \
+       -outfmt '6 qaccver saccver length qlen qstart qend evalue bitscore staxid' \
+       -max_target_seqs 1 \
+       -evalue 0.001 \
+       -remote
+```
+esto devuelve los datos del archivo
+```{bash}
+wc -l resultado.txt
+cat resultado.txt
+```
+
+ahora comprobamos que datastes y dataformat estan instalados:
+```{bash}
+datasets --version
+dataformat --version
+```
+```{bash}
+curl -o datasets 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/mac/datasets'
+curl -o dataformat 'https://ftp.ncbi.nlm.nih.gov/pub/datasets/command-line/v2/mac/dataformat'
+chmod +x datasets dataformat
+sudo mv datasets dataformat /usr/local/bin/
+```
+```{bash}
+cut -f 9 resultado.txt | sort | uniq | paste -sd ',' > taxids.txt
+datasets summary taxonomy taxon $(cat taxids.txt) --as-json-lines | \
+dataformat tsv taxonomy --template tax-summary > taxreport.txt
+```
+```{bash}
+head resultado.txt
+```
+```{bash}
+cut -f 9 resultado.txt
+```
+```{bash}
+cut -f 9 resultado.txt | sort | uniq > taxids_lista.txt
+cat taxids_lista.txt
+```
+```{bash}
+datasets summary taxonomy taxon --inputfile taxids_lista.txt --as-json-lines | \
+dataformat tsv taxonomy --template tax-summary > taxreport.txt
+```
+
+```{bash}
+cat taxreport.txt
+```
+ahora ya tenemos contenido en los documentos, que antes no. resolemos el ejercicio.
+
+```{r}
+blast <- read.table('resultado.txt',
+   col.names = c('qaccver', 'saccver', 'length', 'qlen',
+                 'qstart', 'qend', 'evalue', 'bitscore', 'staxid'))
+
+taxreport <- read.table('taxreport.txt', sep = '\t', header = TRUE, fill = TRUE)
+
+# Unimos las tablas
+blast$linaje <- taxreport[match(blast$staxid, taxreport$Taxid), 'Order.name']
+
+# Fracción de hemípteros
+hemipteros <- sum(blast$linaje == 'Hemiptera', na.rm = TRUE)
+cat('Fracción hemípteros:', hemipteros / nrow(blast), '\n')
+
+# Fracción de plantas
+plantas <- sum(taxreport[match(blast$staxid, taxreport$Taxid), 'Kingdom.name'] == 'Viridiplantae', na.rm = TRUE)
+cat('Fracción plantas:', plantas / nrow(blast), '\n')
+
+# Ver resumen completo
+table(blast$linaje)
+```
+obtenemos que la fracción de hemípteros es 0.277, la de plantas es 0. hay 13 enterobacterales y 5 hemipteras
