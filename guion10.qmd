@@ -1,0 +1,221 @@
+---
+title: "Práctica 10. Ensamblaje de genomas"
+format: html
+editor: visual
+---
+
+si pones #\|eval: FALSE antes de un código, lo puedes ver pero no se ejecuta al compilar el script. eso para
+
+# Objetivo
+
+Ensamblar el genoma de un eucariota diploide con lecturas de PacBio de alta fidelidad
+
+# Preparación
+
+## Hifiasm
+
+Hay que instalar el programa
+
+```{bash}
+if [ ! -d ~/bin ]; then mkdir ~/bin; fi
+cd ~/bin
+git clone https://github.com/chhylp123/hifiasm
+cd hifiasm
+make
+```
+
+este comando en Mac no va, asi que vamos a cambiarlo para que pueda funcionar con mi ordenador:
+
+```{bash}
+# 1. Crear el directorio si no existe
+mkdir -p ~/bin
+
+# 2. Entrar y clonar el repositorio
+cd ~/bin
+git clone https://github.com/chhylp123/hifiasm
+cd hifiasm
+
+# 3. Modificar el Makefile automáticamente para quitar las banderas de Intel
+# Esto borra -msse4.2 y -mpopcnt que causan el error en Mac ARM
+sed -i '' 's/-msse4.2 -mpopcnt//g' Makefile
+
+# 4. Compilar
+make
+```
+
+Lo he ejecutado en el terminal de mac.
+
+Una vez compilado, el ejecutable `~/bin/hifiasm/hifiasm` estará disponible, pero no en el `PATH` (donde Bash pueda encontrarlo). Para que `hifiasm` esté en el PATH, podemos añadir la carpeta `~/bin/hifiasm` al `PATH`. En el terminal de Bash esto se consigue con la orden `export PATH=$PATH:~/bin/hifiasm`. Pero esta orden sólo afecta el terminal en el que se ha ejecutado. Para modificar el PATH permanentemente hay que incluir esta orden en el script `~/.bashrc`. Puedes hacerlo automáticamente con la orden siguiente, pero asegúrte de ejecutarla sólo una vez:
+
+```{bash}
+echo 'export PATH=$PATH:~/bin/hifiasm' >> ~/.bashrc
+```
+
+ como he tenido que instalar `hifiasm`con conda al final para que se me instalara en Mac, el ejecutable ya está en mi `PATH` de entorno.
+
+A partir de entonces, cada vez que inicies el terminal, `hifiasm` estará en el `PATH`. Pero el terminal desde el cual has ejecutado la orden anterior se abrió antes de modificar `.bashrc`. Para que surta efecto sin tener que cerrar y abrir el terminal, puedes usar la orden . `\~/.bashrc`.
+
+## Datos
+
+Vamos a usar lecturas HiFi generadas por Rabanal et al. (2022) de un único individuo de la planta Arabidopsis thaliana, ecotipo Columbia (Col-0), con la tecnología SMRT de PacBio (proyecto \[PRJEB50694\] (https://www.ebi.ac.uk/ena/browser/view/PRJEB50694)). Los datos seleccionados son solo una parte de los originales y se encuentran en el archivo `At4.10.fa.gz` (46 Mb), disponible en el aula virtual. También está en el espacio de disco compartido de la Universidad de Valencia, dentro del grupo de bioinformática. Este espacio es directamente accesible desde los ordenadores virtuales.
+
+En adelante supondré que el archivo está guardado en la carpeta data y que su path relativo es `../../data/At4.10.fa.gz`.
+
+## Revisión de los datos
+
+Los datos están en formato FASTA porque contienen sólo lecturas de alta calidad, y hifiasm no utiliza la información de las calidades de cada base. El archivo está comprimido. Antes de empezar el ensamblaje deberíamos tener una idea de la cantidad de datos que tenemos. Si lo necesitas, utiliza una inteligencia artificial para responder las preguntas siguientes y anota en un bloque de código las órdenes utilizadas. Puedes hacerlo con instrucciones de Bash o de R, pero R necesitará cargar en memoria el archivo entero, lo que no sería muy práctico si se tratara de un archivo 10 o 50 veces mayor.
+
+::: {.callout-note icon="false"}
+### ejercicio 1
+
+1.  ¿Cuántas secuencias contiene el archivo?
+
+```{bash}
+zgrep -c "^>" At4.10.fa
+```
+
+hay 13812 secuencias
+
+2.  ¿Qué longitudes mínima, media y máxima tienen las secuencias? para sacar la longitud mínima:
+
+```{bash}
+awk '$0 ~ ">" {if (NR > 1) print c; c=0; next} {c += length($0)} END {print c}' At4.10.fa | sort -n | head -n 1
+```
+
+la longitud mínima es 2942 nucleótidos.
+
+para ver la media:
+
+```{bash}
+awk '$0 ~ ">" {if (NR > 1) print c; c=0; next} {c += length($0)} END {print c}' At4.10.fa | awk '{sum+=$1; count++} END {print sum/count}'
+```
+
+la media es 18143.6
+
+y para ver lalongitud máxima:
+
+```{bash}
+awk '$0 ~ ">" {if (NR > 1) print c; c=0; next} {c += length($0)} END {print c}' At4.10.fa | sort -nr | head -n 1
+```
+
+la longitd máxima es 59075
+
+3.  ¿Cuál es el número total de bases? usamos este código:
+
+```{bash}
+awk '$0 !~ ">" {sum += length($0)} END {print sum}' At4.10.fa
+```
+
+el numero total de bases es 250599484.
+
+Si se estimara que el genoma a ensamblar fuera de sólo 19 millones de bases, ¿cuál sería la cobertura esperada?
+
+para resolver la cobertura esperada se necesita la fórmula de Lander/Waterman: C = (L x N)/G; donde C: cobertura, L x N: el total de bases y G el tamaño del genoma, que en este caso es 19 millones
+
+primero obtenemos el total de bases:
+
+```{bash}
+awk '$0 !~ ">" {sum += length($0)} END {print sum}' At4.10.fa
+```
+
+da 250599484
+
+y ahora podemos realizar el calculo: C = 250599484/19000000
+
+```{bash}
+echo "250599484 / 19000000" | bc -l
+```
+
+C = 13,18944
+:::
+
+## Ensamblaje
+
+El programa `hifiasm` produce varios archivos de salida. Para tener la carpeta de trabajo ordenada, es recomendable crear un subcarpeta donde poder guardarlos. Si fuéramos a probar más de una estrategia de ensamblado, guardaríamos los resultados de cada intento en una carpeta diferente, que podríamos nombrar asm1, asm2, etc. Aunque sólo realicemos un ensamblaje, crearemos la carpeta asm1 para guardar los resultados en ella.
+
+```{bash}
+if [ ! -d asm1 ]; then mkdir asm1; fi
+```
+
+El ensamblaje de estas lecturas puede durar unos minutos. No queremos tener que ejecutarlo cada vez que compilamos el documento de Quarto. Tenemos dos opciones: o bien usamos la directriz #\| cache: true al principio del bloque de código o bien controlamos directamente la ejecución condicional con Bash. Si usamos el método que ofrece Quarto, aparecerá una nueva carpeta que guarda resultados previos y que estaría bien incluir en el repositorio de Git. Yo prefiero usar Bash:
+
+```{bash}
+if [ ! asm1/At4.bp.p_ctg.gfa ]; then
+   hifiasm -o asm1/At4 -t 2 -f 0 ../../data/At4.10.fa.gz 2> asm1/hifiasm.log
+fi
+```
+
+```{bash}
+# 1. Creamos la carpeta de salida (si no existe)
+mkdir -p asm1
+
+# 2. Ejecutamos el comando con el nombre del archivo directo
+if [ ! -f asm1/At4.bp.p_ctg.gfa ]; then
+    hifiasm -o asm1/At4 -t 2 -f 0 At4.10.fa 2> asm1/hifiasm.log
+fi
+```
+
+
+Las opciones significan lo siguiente:
+
+-   `-o asm1/At4`: usa el prefijo asm1/At4 para los archivos de salida.
+-   `-t 2`: usa dos procesadores. Por defecto usaría uno.
+-   `-f 0`: inhabilita el uso de un filtro de Bloom (Melsted and Pritchard 2011) durante la corrección de errores, que ocuparía 16 Gb de memoria.
+-   `../../data/At4.10.fa.gz`: archivo con los datos de partida.
+-   `2> asm1/hifiasm.log`: guarda los numerosos mensajes que hifiasm envía al error estándar en un archivo asm1/hifiasm.log. Esto evita que esos mensajes se acumulen en el informe HTML.
+
+:::: {.callout-note icon="false"}
+### ejericicio 2
+
+Consulta la ayuda de hifiasm (hifiasm -h) y contesta las preguntas siguientes:
+
+1.  ¿Los parámetros corresponden al ensamblaje de un genoma haploide o diploide? la opción `--n-hap` te puede decir el numero de haplotipos.
+
+2.  ¿Qué nivel de eliminación de duplicaciones hemos aplicado? (El paso de eliminar duplicaciones sirve para que las zonas de alta heterocigosidad no sean ensambladas como contigs diferentes). se aplica el nivel 3, que es el más agresivo, lo vemos en la parte de `-l INT` se ven los niveles (purge level. 0: no purging; 1: light; 2/3: aggressive \[0 for trio; 3 for unzip\])
+
+3.  Si tuvieramos lecturas ultra-largas, ¿con qué opción o argumento añadiríamos esa información? la opción que usariamos sería --ul(--ul FILEs file names of Ultra-Long reads \[r1.fq,r2.fq,...\])
+
+## Evaluación del resultado
+
+::: {.callout-note icon="false"}
+### Ejercicio 3
+
+Consulta la descripción de los archivos de salida que encontrarás en este enlace y contesta las preguntas siguientes:
+
+1.  ¿Dónde están las secuencias que componen el ensamblaje?
+las secuencias están en los archivos GFA
+
+2.  En los archivos .gfa, ¿qué son las líneas que empiezan por ‘A’?
+
+
+3.  ¿Qué información tiene los archivos .bed?
+
+4.  ¿Cuál es la cobertura media estimada de las secuencias homocigotas?
+
+5.  ¿Y la de las heterocigotas?
+
+:::
+:::
+# Anotaciones de la práctica
+
+hay que hacer los scripts con la mayor reproducibilidad posible, si hay que ponerle cosas que solo están en tu ordenador, le qutas la reproducibilidad. si quieres poner algo que solo ale para tu ordenador, pones el path directamente (HF = \~/bin/hifiasm/hifiasm). hay otra solución, al prinicpio le puedes decir `export PATH =~/bin/hifiasm/hifiasm)` . el prefiere que lo que añade, añadirlo al final no al principio.
+
+
+si el ensamblaje ha salido (que no es micaso) la carpeta asm1 te sale llena de documentos. si abres un en concreto con bandage te sale el dibujo de los contigs. 
+
+con este código de r
+```{r}
+library(Biostrings)
+asm1 <- readDNAStringSet('asm1/At4.fa')
+asm1.len <- data.frame(
+  len = sort(width(asm1),
+             decreasing = TRUE)
+)
+asm1.len$cumlen <- cumsum(asm1.len$len)
+asm1.len$cumprop <- asm1.len$cumlen / 
+                    sum(asm1.len$len)
+asm1.len
+```
+sirve para ver la N50 y más cosas. 
+
+::::
