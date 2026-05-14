@@ -6,7 +6,6 @@ execute:
   output: false
   error: true
 engine: knitr
-bibliography: ../../references.bib
 language:
    title-block-published: "Última actualización:"
    section-title-references: "Bibliografía"
@@ -215,6 +214,53 @@ Determina cuántos taxones de UniProtKB no tienen ninguna proteína asignada.
 ¿Y qué proporción de proteínas cuentan con una estructura terciaria?
 :::
 
+Para ello: https://www.ebi.ac.uk/interpro/api/protein
+https://www.ebi.ac.uk/interpro/api/protein/taxonomy
+
+Ahora definimos un objeto para todas las proteínas de UniProt y otro
+solo para las que tienen asignadas un taxón
+
+```{r}
+Taxonomia <- fromJSON(paste0(API, 'taxonomy'))
+str(Taxonomia)
+todos <- Taxonomia[['taxa']][['uniprot']]
+todos
+```
+
+```{r}
+# Taxones que tienen proteínas asignadas
+Tpro <- fromJSON(paste0(API, 'taxonomy/uniprot/protein'))
+str(Tpro)
+Taxconprot <- Tpro[['count']]
+Taxconprot
+```
+
+Ahora restamos:
+
+```{r}
+todos-Taxconprot
+```
+
+En total, hay 1.387.422 taxones que no tienen ninguna proteína asignada.
+
+Para la estructura terciaria, creamos un objeto con la información de
+estructuras y luego accedemos a los datos.
+
+```{r}
+todas <- fromJSON(paste0(API, 'protein'))
+str(todas)
+Proteinas <- todas[['proteins']][['uniprot']]
+Proteinas
+```
+
+```{r}
+estructura <- fromJSON(paste0(API, 'protein/structure'))
+str(estructura)
+ProtconEstructura3a <- estructura[['proteins']][['uniprot']]
+ProtconEstructura3a
+```
+
+
 # Filtros. Subconjunto de registros
 Podemos especificar un registro concreto de un tipo de datos para limitar una
 lista de registros de otro tipo de datos. Por ejemplo, la lista de proteínas
@@ -237,15 +283,35 @@ kable(flatten(pfam00019[['results']][['metadata']])) %>%
    kable_styling()
 ```
 
-:::{.callout-note icon=false}
+::: {.callout-note icon="false"}
 ## Ejercicio 5
-Intenta obtener una lista de los dominios de Pfam presentes en vertebrados
-(taxon 7742). Al menos, los 20 primeros.
 
+Intenta obtener una lista de los dominios de Pfam presentes en
+vertebrados (taxon 7742). Al menos, los 20 primeros.
+:::
+
+```{r}
+vertebrados <- fromJSON(paste0(API, 'entry/pfam/taxonomy/uniprot/7742'))
+names(vertebrados)
+vertebrados[['results']][['metadata']]
+kable(vertebrados)
+```
+
+::: {.callout-note icon="false"}
 ## Ejercicio 6
+
 ¿Cuántas proteínas de cocodrilos (taxon 8493) conocemos con el dominio
 *zinc finger, C2HC type* (Pfam PF01530)?
 :::
+
+```{r}
+pfam01530 <- fromJSON(paste0(API, 'protein/uniprot/entry/pfam/PF01530/taxonomy/uniprot/8493'))
+names(pfam01530)
+pfam01530[['count']]
+```
+
+Se conocen 15 proteínas de cocodrilos con el dominio *zinc finger, C2HC
+type* (Pfam PF01530).
 
 # Apéndice. Cómo juntar todas las páginas que genera la API de Interpro
 A continuación utilizo un **bucle** para crear una lista de marcos de datos que
